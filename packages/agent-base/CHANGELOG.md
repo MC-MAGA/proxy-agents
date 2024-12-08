@@ -1,5 +1,17 @@
 # agent-base
 
+## 7.1.3
+
+### Patch Changes
+
+- 12bbc08: Remove unused `debug` dependency.
+
+## 7.1.2
+
+### Patch Changes
+
+- 1699a09: Handle exceptions caused by Agent.addRequest()
+
 ## 7.1.1
 
 ### Patch Changes

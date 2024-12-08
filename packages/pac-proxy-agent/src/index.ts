@@ -5,11 +5,11 @@ import * as crypto from 'crypto';
 import { once } from 'events';
 import createDebug from 'debug';
 import { Readable } from 'stream';
-import { format, URL } from 'url';
+import { URL } from 'url';
 import { Agent, AgentConnectOpts, toBuffer } from 'agent-base';
-import { HttpProxyAgent, HttpProxyAgentOptions } from 'http-proxy-agent';
-import { HttpsProxyAgent, HttpsProxyAgentOptions } from 'https-proxy-agent';
-import { SocksProxyAgent, SocksProxyAgentOptions } from 'socks-proxy-agent';
+import type { HttpProxyAgentOptions } from 'http-proxy-agent';
+import type { HttpsProxyAgentOptions } from 'https-proxy-agent';
+import type { SocksProxyAgentOptions } from 'socks-proxy-agent';
 import {
 	getUri,
 	protocols as gProtocols,
@@ -23,6 +23,24 @@ import {
 import { getQuickJS } from '@tootallnate/quickjs-emscripten';
 
 const debug = createDebug('pac-proxy-agent');
+
+const setServernameFromNonIpHost = <
+	T extends { host?: string; servername?: string }
+>(
+	options: T
+) => {
+	if (
+		options.servername === undefined &&
+		options.host &&
+		!net.isIP(options.host)
+	) {
+		return {
+			...options,
+			servername: options.host,
+		};
+	}
+	return options;
+};
 
 type Protocols = keyof typeof gProtocols;
 
@@ -180,38 +198,23 @@ export class PacProxyAgent<Uri extends string> extends Agent {
 		opts: AgentConnectOpts
 	): Promise<http.Agent | net.Socket> {
 		const { secureEndpoint } = opts;
+		const isWebSocket = req.getHeader('upgrade') === 'websocket';
 
 		// First, get a generated `FindProxyForURL()` function,
 		// either cached or retrieved from the source
 		const resolver = await this.getResolver();
 
 		// Calculate the `url` parameter
+		const protocol = secureEndpoint ? 'https:' : 'http:';
+		const host =
+			opts.host && net.isIPv6(opts.host) ? `[${opts.host}]` : opts.host;
 		const defaultPort = secureEndpoint ? 443 : 80;
-		let path = req.path;
-		let search: string | null = null;
-		const firstQuestion = path.indexOf('?');
-		if (firstQuestion !== -1) {
-			search = path.substring(firstQuestion);
-			path = path.substring(0, firstQuestion);
-		}
+		const url = Object.assign(
+			new URL(req.path, `${protocol}//${host}`),
+			defaultPort ? undefined : { port: opts.port }
+		);
 
-		const urlOpts = {
-			...opts,
-			protocol: secureEndpoint ? 'https:' : 'http:',
-			pathname: path,
-			search,
-
-			// need to use `hostname` instead of `host` otherwise `port` is ignored
-			hostname: opts.host,
-			host: null,
-			href: null,
-
-			// set `port` to null when it is the protocol default port (80 / 443)
-			port: defaultPort === opts.port ? null : opts.port,
-		};
-		const url = format(urlOpts);
-
-		debug('url: %o', url);
+		debug('url: %s', url);
 		let result = await resolver(url);
 
 		// Default to "DIRECT" if a falsey value was returned (or nothing)
@@ -237,19 +240,17 @@ export class PacProxyAgent<Uri extends string> extends Agent {
 			if (type === 'DIRECT') {
 				// Direct connection to the destination endpoint
 				if (secureEndpoint) {
-					const servername = opts.servername || opts.host;
-					socket = tls.connect({
-						...opts,
-						servername,
-					});
+					socket = tls.connect(setServernameFromNonIpHost(opts));
 				} else {
 					socket = net.connect(opts);
 				}
 			} else if (type === 'SOCKS' || type === 'SOCKS5') {
 				// Use a SOCKSv5h proxy
+				const { SocksProxyAgent } = await import('socks-proxy-agent');
 				agent = new SocksProxyAgent(`socks://${target}`, this.opts);
 			} else if (type === 'SOCKS4') {
 				// Use a SOCKSv4a proxy
+				const { SocksProxyAgent } = await import('socks-proxy-agent');
 				agent = new SocksProxyAgent(`socks4a://${target}`, this.opts);
 			} else if (
 				type === 'PROXY' ||
@@ -261,9 +262,13 @@ export class PacProxyAgent<Uri extends string> extends Agent {
 				const proxyURL = `${
 					type === 'HTTPS' ? 'https' : 'http'
 				}://${target}`;
-				if (secureEndpoint) {
+				if (secureEndpoint || isWebSocket) {
+					const { HttpsProxyAgent } = await import(
+						'https-proxy-agent'
+					);
 					agent = new HttpsProxyAgent(proxyURL, this.opts);
 				} else {
+					const { HttpProxyAgent } = await import('http-proxy-agent');
 					agent = new HttpProxyAgent(proxyURL, this.opts);
 				}
 			}

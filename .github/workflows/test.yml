@@ -16,6 +16,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         node-version: [14.x, 16.x, 18.x, 20.x]
+        exclude:
+          # Node 14 is not supported on macOS arm64
+          - os: macos-latest
+            node-version: 14.x
       fail-fast: false
 
     runs-on: ${{ matrix.os }}
@@ -67,6 +71,41 @@ jobs:
 
       - name: Run Lint
         run: pnpm lint
+        id: lint
+        continue-on-error: true
+
+      - name: Run Format
+        run: pnpm format:check
+        id: format
+        continue-on-error: true
+
+      - name: Run Engines Check
+        run: node scripts/check-deps.mjs engines
+        id: engines
+        continue-on-error: true
+
+      - name: Run Licenses Check
+        run: node scripts/check-deps.mjs licenses
+        id: licenses
+        continue-on-error: true
+
+      - name: Check Results
+        run: |
+          declare -A OUTCOMES=(
+            [lint]="${{ steps.lint.outcome }}"
+            [format]="${{ steps.format.outcome }}"
+            [engines]="${{ steps.engines.outcome }}"
+            [licenses]="${{ steps.licenses.outcome }}"
+          )
+          STATUS=0
+          for STEP in "${!OUTCOMES[@]}"; do
+            OUTCOME="${OUTCOMES[$STEP]}"
+            echo "$STEP: $OUTCOME"
+            if [ "$OUTCOME" != "success" ]; then
+              STATUS=1
+            fi
+          done
+          exit $STATUS
 
   e2e:
     name: E2E

@@ -1,5 +1,19 @@
 # https-proxy-agent
 
+## 7.0.6
+
+### Patch Changes
+
+- 913a49a: Only overwrite servername in tls connect when host is not an IP address
+- Updated dependencies [1699a09]
+  - agent-base@7.1.2
+
+## 7.0.5
+
+### Patch Changes
+
+- 5908e84: Remove `net.isIP()` check for TLS `servername`
+
 ## 7.0.4
 
 ### Patch Changes
